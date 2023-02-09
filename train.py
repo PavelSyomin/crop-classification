@@ -1,4 +1,4 @@
-from data import BavarianCrops, BreizhCrops, SustainbenchCrops, ModisCDL
+from data import BavarianCrops, BreizhCrops, SustainbenchCrops, ModisCDL, Russia
 from torch.utils.data import DataLoader
 from earlyrnn import EarlyRNN
 import torch
@@ -11,9 +11,10 @@ import pandas as pd
 import argparse
 import os
 
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Run ELECTS Early Classification training on the BavarianCrops dataset.')
-    parser.add_argument('--dataset', type=str, default="bavariancrops", choices=["bavariancrops","breizhcrops", "ghana", "southsudan","unitedstates"], help="dataset")
+    parser.add_argument('--dataset', type=str, default="bavariancrops", choices=["bavariancrops","breizhcrops", "ghana", "southsudan", "unitedstates", "russia"], help="dataset")
     parser.add_argument('--alpha', type=float, default=0.5, help="trade-off parameter of earliness and accuracy (eq 6): "
                                                                  "1=full weight on accuracy; 0=full weight on earliness")
     parser.add_argument('--epsilon', type=float, default=10, help="additive smoothing parameter that helps the "
@@ -35,7 +36,7 @@ def parse_args():
     parser.add_argument('--snapshot', type=str, default="snapshots/model.pth",
                         help="pytorch state dict snapshot file")
     parser.add_argument('--resume', action='store_true')
-
+    parser.add_argument('--year', type=int, default=2018, help="year for Russia dataset (2018–2022)")
 
     args = parser.parse_args()
 
@@ -102,6 +103,13 @@ def main(args):
         train_ds = torch.utils.data.ConcatDataset([train_ds, val_ds])
         test_ds = SustainbenchCrops(root=dataroot, partition="val", sequencelength=args.sequencelength,
                                    country="southsudan", use_s2_only=use_s2_only)
+    elif args.dataset in ["russia"]:
+        dataroot = os.path.join(args.dataroot, "russia")
+        nclasses = 13
+        input_dim = 10
+        class_weights = None
+        train_ds = Russia(root=dataroot, partition="train", sequencelength=args.sequencelength, year=args.year)
+        test_ds = Russia(root=dataroot, partition="test", sequencelength=args.sequencelength, year=args.year)
 
     else:
         raise ValueError(f"dataset {args.dataset} not recognized")
@@ -112,6 +120,8 @@ def main(args):
     testdataloader = DataLoader(
         test_ds,
         batch_size=args.batchsize)
+
+    print("X shape:", train_ds[0][0].shape, "y shape:", train_ds[0][1].shape)
 
     model = EarlyRNN(nclasses=nclasses, input_dim=input_dim).to(args.device)
 
