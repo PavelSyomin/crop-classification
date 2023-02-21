@@ -5,7 +5,7 @@ import numpy as np
 import os
 import json
 
-import torchvision.transforms as transforms
+#import torchvision.transforms as transforms
 from sklearn.metrics import f1_score, accuracy_score
 import zipfile
 

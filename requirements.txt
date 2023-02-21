@@ -10,5 +10,4 @@ scikit-learn
 jupyter
 breizhcrops
 netCDF4
-visdom
 torchvision

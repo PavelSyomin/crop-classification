@@ -1,4 +1,4 @@
-from data import BavarianCrops, BreizhCrops, SustainbenchCrops, ModisCDL, Russia
+from data import BavarianCrops, BreizhCrops, ModisCDL, SustainbenchCrops, Russia
 from torch.utils.data import DataLoader
 from earlyrnn import EarlyRNN
 import torch
@@ -10,6 +10,7 @@ import sklearn.metrics
 import pandas as pd
 import argparse
 import os
+from transformer_model import TransformerModel
 
 
 def parse_args():
@@ -36,7 +37,9 @@ def parse_args():
     parser.add_argument('--snapshot', type=str, default="snapshots/model.pth",
                         help="pytorch state dict snapshot file")
     parser.add_argument('--resume', action='store_true')
-    parser.add_argument('--year', type=int, default=2018, help="year for Russia dataset (2018–2022)")
+    parser.add_argument('--year', type=int, default=None, help="year for Russia dataset (2018–2022) or None for all years")
+    parser.add_argument('--use_cache', action="store_true", help="save preprocessed data in cache files")
+    parser.add_argument('--model', type=str, default="earlyrnn", choices=["earlyrnn", "transformer"], help="model to use")
 
     args = parser.parse_args()
 
@@ -46,6 +49,9 @@ def parse_args():
     return args
 
 def main(args):
+
+    if args.model not in ("earlyrnn", "transformer"):
+        raise ValueError(f"Unrecognized model {args.model}")
 
     if args.dataset == "bavariancrops":
         dataroot = os.path.join(args.dataroot,"bavariancrops")
@@ -108,23 +114,59 @@ def main(args):
         nclasses = 13
         input_dim = 10
         class_weights = None
-        train_ds = Russia(root=dataroot, partition="train", sequencelength=args.sequencelength, year=args.year)
-        test_ds = Russia(root=dataroot, partition="test", sequencelength=args.sequencelength, year=args.year)
+        if args.year is None:
+            years_range = range(2018, 2023)
+        else:
+            years_range = (args.year,)
+        broadcast_y = True if args.model == "earlyrnn" else False
+        train_datasets = [
+            Russia(root=dataroot,
+                   partition="train",
+                   sequencelength=args.sequencelength,
+                   year=current_year,
+                   use_cache=args.use_cache,
+                   broadcast_y=broadcast_y)
+            for current_year in years_range
+        ]
+        test_datasets = [
+            Russia(root=dataroot,
+                   partition="test",
+                   sequencelength=args.sequencelength,
+                   year=current_year,
+                   use_cache=args.use_cache,
+                   broadcast_y=broadcast_y)
+            for current_year in years_range
+        ]
+        train_ds = torch.utils.data.ConcatDataset(train_datasets)
+        test_ds = torch.utils.data.ConcatDataset(test_datasets)
 
     else:
         raise ValueError(f"dataset {args.dataset} not recognized")
 
+    print(f"Total length of data: train={len(train_ds)}, test={len(test_ds)}")
+
     traindataloader = DataLoader(
         train_ds,
-        batch_size=args.batchsize)
+        batch_size=args.batchsize, shuffle=True)
     testdataloader = DataLoader(
         test_ds,
-        batch_size=args.batchsize)
+        batch_size=args.batchsize, shuffle=True)
 
     print("X shape:", train_ds[0][0].shape, "y shape:", train_ds[0][1].shape)
 
-    model = EarlyRNN(nclasses=nclasses, input_dim=input_dim).to(args.device)
-
+    if args.model == "earlyrnn":
+        model = EarlyRNN(nclasses=nclasses, input_dim=input_dim).to(args.device)
+    elif args.model == "transformer":
+        model = TransformerModel(
+            input_dim=input_dim,
+            num_classes=nclasses,
+            d_model=args.sequencelength,
+            n_head=1,
+            n_layers=3,
+            d_inner=512,
+            activation="relu",
+            dropout=0.4,
+        ).to(args.device)
 
     #optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
 
@@ -135,11 +177,20 @@ def main(args):
             no_decay.append(param)
         else:
             decay.append(param)
-
-    optimizer = torch.optim.AdamW([{'params': no_decay, 'weight_decay': 0, "lr": args.learning_rate}, {'params': decay}],
-                                  lr=args.learning_rate, weight_decay=args.weight_decay)
-
-    criterion = EarlyRewardLoss(alpha=args.alpha, epsilon=args.epsilon)
+    if args.model == "earlyrnn":
+        optimizer = torch.optim.AdamW([{'params': no_decay, 'weight_decay': 0, "lr": args.learning_rate}, {'params': decay}],
+                                      lr=args.learning_rate, weight_decay=args.weight_decay)
+        criterion = EarlyRewardLoss(alpha=args.alpha, epsilon=args.epsilon)
+    elif args.model == "transformer":
+        optimizer = torch.optim.Adam(
+            filter(lambda x: x.requires_grad, model.parameters()),
+            betas=(0.9, 0.98),
+            eps=1e-09,
+            #     ν = 1.31 · 10−3 and λ = 5.52 · 10−8
+            weight_decay=5.52e-8,
+            lr=1.31e-3,
+        )
+        criterion = torch.nn.NLLLoss()
 
     if args.resume and os.path.exists(args.snapshot):
         model.load_state_dict(torch.load(args.snapshot, map_location=args.device))
@@ -155,12 +206,16 @@ def main(args):
         train_stats = []
         start_epoch = 1
     visdom_logger = VisdomLogger()
-
+    
     not_improved = 0
     with tqdm(range(start_epoch, args.epochs + 1)) as pbar:
         for epoch in pbar:
-            trainloss = train_epoch(model, traindataloader, optimizer, criterion, device=args.device)
-            testloss, stats = test_epoch(model, testdataloader, criterion, args.device)
+            if args.model == "earlyrnn":
+                trainloss = train_epoch(model, traindataloader, optimizer, criterion, device=args.device)
+                testloss, stats = test_epoch(model, testdataloader, criterion, args.device)
+            elif args.model == "transformer":
+                trainloss = train_epoch_transformer(model, traindataloader, optimizer, criterion, device=args.device)
+                testloss, stats = test_epoch_transformer(model, testdataloader, criterion, args.device)
 
             # statistic logging and visualization...
             precision, recall, fscore, support = sklearn.metrics.precision_recall_fscore_support(
@@ -244,7 +299,7 @@ def train_epoch(model, dataloader, optimizer, criterion, device):
         loss = criterion(log_class_probabilities, probability_stopping, y_true)
 
         #assert not loss.isnan().any()
-        if not loss.isnan().any():
+        if not torch.isnan(loss).any():
             loss.backward()
             optimizer.step()
 
@@ -277,8 +332,77 @@ def test_epoch(model, dataloader, criterion, device):
 
     # list of dicts to dict of lists
     stats = {k: np.vstack([dic[k] for dic in stats]) for k in stats[0]}
+    print(stats["predictions_at_t_stop"], stats["targets"])
 
     return np.stack(losses).mean(), stats
+
+def train_epoch_transformer(model, dataloader, optimizer, criterion, device):
+    losses = []
+    model.train()
+
+    for batch in dataloader:
+        optimizer.zero_grad()
+        X, y_true, *_ = batch
+        X, y_true = X.to(device), y_true.to(device)
+
+        logprobabilities = model(X)
+        loss = criterion(logprobabilities, y_true)
+
+        if not torch.isnan(loss).any():
+            loss.backward()
+            optimizer.step()
+
+            losses.append(loss.cpu().detach().numpy())
+        else:
+            print("Loss contain NaN")
+
+    return np.stack(losses).mean()
+
+
+def test_epoch_transformer(model, dataloader, criterion, device):
+    model.eval()
+
+    stats = []
+    losses = []
+    with torch.no_grad():
+        for batch in dataloader:
+            X, y_true, *_ = batch
+            X, y_true = X.to(device), y_true.to(device)
+            batch_size, sequencelength, _ = X.shape
+
+            log_class_probabilities = model(X)
+            loss = criterion(log_class_probabilities, y_true)
+            loss = loss.cpu().detach().numpy()
+
+            predictions_at_t_stop = log_class_probabilities.argmax(1)
+            t_stop = np.full((batch_size, 1), fill_value=sequencelength - 1)
+            probability_stopping = np.zeros((batch_size, sequencelength))
+            probability_stopping[:, -1] = 1
+
+            stat = {
+                "classification_loss": loss,
+                "earliness_reward": np.array([0.0]),
+                "probability_making_decision": np.ones((batch_size, sequencelength)),
+            }
+
+            stat["loss"] = loss
+
+            stat["probability_stopping"] = probability_stopping
+            stat["class_probabilities"] = log_class_probabilities.unsqueeze(1).repeat(1, sequencelength, 1).exp().cpu().detach().numpy()
+            stat["predictions_at_t_stop"] = predictions_at_t_stop.unsqueeze(-1).cpu().detach().numpy()
+            stat["t_stop"] = t_stop
+            stat["targets"] = y_true.unsqueeze(1).repeat(1, sequencelength).cpu().detach().numpy()
+
+            stats.append(stat)
+
+            losses.append(loss)
+
+    # list of dicts to dict of lists
+    stats = {k: np.vstack([dic[k] for dic in stats]) for k in stats[0]}
+    print(stats["predictions_at_t_stop"], stats["targets"])
+
+    return np.stack(losses).mean(), stats
+
 
 if __name__ == '__main__':
     args = parse_args()
