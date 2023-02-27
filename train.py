@@ -10,7 +10,14 @@ import sklearn.metrics
 import pandas as pd
 import argparse
 import os
+import random
 from transformer_model import TransformerModel
+
+
+seed = 42
+torch.manual_seed(seed)
+random.seed(seed)
+np.random.seed(seed)
 
 
 def parse_args():
@@ -27,17 +34,17 @@ def parse_args():
                         choices=["cuda", "cpu"], help="'cuda' (GPU) or 'cpu' device to run the code. "
                                                      "defaults to 'cuda' if GPU is available, otherwise 'cpu'")
     parser.add_argument('--epochs', type=int, default=100, help="number of training epochs")
-    parser.add_argument('--sequencelength', type=int, default=70, help="sequencelength of the time series. If samples are shorter, "
+    parser.add_argument('--sequencelength', type=int, default=180, help="sequencelength of the time series. If samples are shorter, "
                                                                 "they are zero-padded until this length; "
                                                                 "if samples are longer, they will be undersampled")
-    parser.add_argument('--batchsize', type=int, default=256, help="number of samples per batch")
+    parser.add_argument('--batchsize', type=int, default=128, help="number of samples per batch")
     parser.add_argument('--dataroot', type=str, default=os.path.join(os.environ["HOME"],"elects_data"), help="directory to download the "
                                                                                  "BavarianCrops dataset (400MB)."
                                                                                  "Defaults to home directory.")
     parser.add_argument('--snapshot', type=str, default="snapshots/model.pth",
                         help="pytorch state dict snapshot file")
     parser.add_argument('--resume', action='store_true')
-    parser.add_argument('--year', type=int, default=None, help="year for Russia dataset (2018–2022) or None for all years")
+    parser.add_argument('--year', type=int, default=2021, help="year for Russia dataset (2018–2022) or None for all years")
     parser.add_argument('--use_cache', action="store_true", help="save preprocessed data in cache files")
     parser.add_argument('--model', type=str, default="earlyrnn", choices=["earlyrnn", "transformer"], help="model to use")
 
@@ -125,6 +132,7 @@ def main(args):
                    sequencelength=args.sequencelength,
                    year=current_year,
                    use_cache=args.use_cache,
+                   return_id=True,
                    broadcast_y=broadcast_y)
             for current_year in years_range
         ]
@@ -134,6 +142,7 @@ def main(args):
                    sequencelength=args.sequencelength,
                    year=current_year,
                    use_cache=args.use_cache,
+                   return_id=True,
                    broadcast_y=broadcast_y)
             for current_year in years_range
         ]
@@ -206,7 +215,7 @@ def main(args):
         train_stats = []
         start_epoch = 1
     visdom_logger = VisdomLogger()
-    
+
     not_improved = 0
     with tqdm(range(start_epoch, args.epochs + 1)) as pbar:
         for epoch in pbar:
@@ -259,7 +268,7 @@ def main(args):
 
             savemsg = ""
             if len(df) > 2:
-                if testloss < df.testloss[:-1].values.min():
+                if testloss < df.testloss.iloc[:-1].values.min():
                     savemsg = f"saving model to {args.snapshot}"
                     os.makedirs(os.path.dirname(args.snapshot), exist_ok=True)
                     torch.save(model.state_dict(), args.snapshot)
@@ -287,6 +296,7 @@ def main(args):
                     print(f"stopping training. testloss {testloss:.2f} did not improve in {args.patience} epochs.")
                     break
 
+
 def train_epoch(model, dataloader, optimizer, criterion, device):
     losses = []
     model.train()
@@ -294,6 +304,7 @@ def train_epoch(model, dataloader, optimizer, criterion, device):
         optimizer.zero_grad()
         X, y_true = batch
         X, y_true = X.to(device), y_true.to(device)
+
         log_class_probabilities, probability_stopping = model(X)
 
         loss = criterion(log_class_probabilities, probability_stopping, y_true)
@@ -332,7 +343,7 @@ def test_epoch(model, dataloader, criterion, device):
 
     # list of dicts to dict of lists
     stats = {k: np.vstack([dic[k] for dic in stats]) for k in stats[0]}
-    print(stats["predictions_at_t_stop"], stats["targets"])
+    #print(stats["predictions_at_t_stop"], stats["targets"])
 
     return np.stack(losses).mean(), stats
 
@@ -345,8 +356,11 @@ def train_epoch_transformer(model, dataloader, optimizer, criterion, device):
         X, y_true, *_ = batch
         X, y_true = X.to(device), y_true.to(device)
 
+        #print(X[0, :5, :])
+        #break
         logprobabilities = model(X)
         loss = criterion(logprobabilities, y_true)
+        #print(loss)
 
         if not torch.isnan(loss).any():
             loss.backward()
@@ -355,7 +369,7 @@ def train_epoch_transformer(model, dataloader, optimizer, criterion, device):
             losses.append(loss.cpu().detach().numpy())
         else:
             print("Loss contain NaN")
-
+    #print(np.stack(losses))
     return np.stack(losses).mean()
 
 
@@ -399,9 +413,27 @@ def test_epoch_transformer(model, dataloader, criterion, device):
 
     # list of dicts to dict of lists
     stats = {k: np.vstack([dic[k] for dic in stats]) for k in stats[0]}
-    print(stats["predictions_at_t_stop"], stats["targets"])
+    #print(stats["predictions_at_t_stop"], stats["targets"])
 
     return np.stack(losses).mean(), stats
+
+
+def default_transform(x: np.ndarray, sequencelength: int) -> np.ndarray:
+    # choose with replacement if sequencelength smaller als choose_t
+    replace = False if x.shape[0] >= sequencelength else True
+    idxs = np.random.choice(x.shape[0], sequencelength, replace=replace)
+    idxs.sort()
+    x = x[idxs]
+    return x
+
+
+def shift_transform(x: np.ndarray, sequencelength: int) -> np.ndarray:
+    max_shift = x.shape[0] - sequencelength
+    if max_shift <= 0:
+        return x
+    shift = np.random.randint(0, max_shift - 1)
+    x = x[shift : shift + sequencelength]
+    return x
 
 
 if __name__ == '__main__':

@@ -57,10 +57,6 @@ class Russia(Dataset):
         self.sequencelength = sequencelength
         assert partition in self.PARTITIONS
         self.partition = partition
-        #if self.partition == "train":
-        #    self.transform = default_transform
-        #else:
-        #   self.transform = shift_transform
         self.classmapping_df = pd.read_csv(classmapping_path)
         self.fieldsmapping_df = pd.read_csv(fieldsmapping_path)
         self.fieldid2classid = {
