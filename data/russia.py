@@ -106,16 +106,35 @@ class Russia(Dataset):
 
     def __getitem__(self, index):
         # dataset[index]
+
+        # Special case for string indices X and y
+        # used to get all X or y values as ndarrays
+        # for Random Forest / boosting methods
+        if type(index) is str:
+            if index == "X":
+                X_mapped = map(
+                    lambda x: self.adjust_to_sequencelength(x).flatten(),
+                    self.X_list
+                )
+                X = np.stack(list(X_mapped))
+                return X
+            elif index == "y":
+                y = np.array(self.y_list)
+                return y
+            else:
+                raise IndexError("String index must be either X or y")
+
+        # General case for torch dataloader
         X = self.X_list[index]
 
         # get length of this sample
-        t = X.shape[0]
+        #t = X.shape[0]
 
         y = self.y_list[index]
         if self.broadcast_y:
-            y = np.full(t, fill_value=y)
+            y = np.full(X.shape[0], fill_value=y)
 
-        if t < self.sequencelength:
+        '''if t < self.sequencelength:
             # time series shorter than "sequencelength" will be zero-padded
             npad = self.sequencelength - t
             X = np.pad(X, [(0, npad), (0, 0)], 'constant', constant_values=0)
@@ -127,7 +146,9 @@ class Russia(Dataset):
             idxs.sort()
             X = X[idxs]
             if self.broadcast_y:
-                y = y[idxs]
+                y = y[idxs]'''
+
+        X, y = self.adjust_to_sequencelength(X, y)
 
         X = torch.from_numpy(X).type(torch.float)
         y = torch.from_numpy(y).type(torch.long)
@@ -191,4 +212,26 @@ class Russia(Dataset):
         if self.use_cache:
             with open(self.cache_file, "wb") as f:
                 pickle.dump([self.X_list, self.y_list, self.field_ids_list], f)
+
+    def adjust_to_sequencelength(self, X, y=None):
+        sample_length = X.shape[0]
+
+        if sample_length < self.sequencelength:
+            # time series shorter than "sequencelength" will be zero-padded
+            npad = self.sequencelength - sample_length
+            X = np.pad(X, [(0, npad), (0, 0)], 'constant', constant_values=0)
+            if y is not None and self.broadcast_y:
+                y = np.pad(y, (0, npad), 'constant', constant_values=0)
+        elif sample_length > self.sequencelength:
+            # time series longer than "sequencelength" will be sub-sampled
+            idxs = np.random.choice(sample_length, self.sequencelength, replace=False)
+            idxs.sort()
+            X = X[idxs]
+            if y is not None and self.broadcast_y:
+                y = y[idxs]
+
+        if y is not None:
+            return X, y
+        else:
+            return X
 
