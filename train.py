@@ -11,6 +11,7 @@ import pandas as pd
 import argparse
 import os
 import random
+from temp_cnn_model import TempCNN
 from transformer_model import TransformerModel
 
 
@@ -46,7 +47,8 @@ def parse_args():
     parser.add_argument('--resume', action='store_true')
     parser.add_argument('--year', type=int, default=2021, help="year for Russia dataset (2018–2022) or None for all years")
     parser.add_argument('--use_cache', action="store_true", help="save preprocessed data in cache files")
-    parser.add_argument('--model', type=str, default="earlyrnn", choices=["earlyrnn", "transformer"], help="model to use")
+    parser.add_argument('--model', type=str, default="earlyrnn", choices=["earlyrnn", "transformer", "tempcnn"], help="model to use")
+    parser.add_argument('--n_months', type=int, default=6, help="use selected number of months from April 1. E.g. if this argument is set to 3, then the model will use data from April 1 to June 30")
 
     args = parser.parse_args()
 
@@ -57,7 +59,7 @@ def parse_args():
 
 def main(args):
 
-    if args.model not in ("earlyrnn", "transformer"):
+    if args.model not in ("earlyrnn", "transformer", "tempcnn"):
         raise ValueError(f"Unrecognized model {args.model}")
 
     if args.dataset == "bavariancrops":
@@ -132,8 +134,9 @@ def main(args):
                    sequencelength=args.sequencelength,
                    year=current_year,
                    use_cache=args.use_cache,
-                   return_id=True,
-                   broadcast_y=broadcast_y)
+                   return_id=False,
+                   broadcast_y=broadcast_y,
+                   n_months=args.n_months)
             for current_year in years_range
         ]
         test_datasets = [
@@ -142,8 +145,9 @@ def main(args):
                    sequencelength=args.sequencelength,
                    year=current_year,
                    use_cache=args.use_cache,
-                   return_id=True,
-                   broadcast_y=broadcast_y)
+                   return_id=False,
+                   broadcast_y=broadcast_y,
+                   n_months=args.n_months)
             for current_year in years_range
         ]
         train_ds = torch.utils.data.ConcatDataset(train_datasets)
@@ -176,6 +180,12 @@ def main(args):
             activation="relu",
             dropout=0.4,
         ).to(args.device)
+    elif args.model == "tempcnn":
+        model = TempCNN(
+            input_dim=input_dim,
+            num_classes=nclasses,
+            sequencelength=args.sequencelength,
+        ).to(args.device)
 
     #optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
 
@@ -200,6 +210,13 @@ def main(args):
             lr=1.31e-3,
         )
         criterion = torch.nn.NLLLoss()
+    elif args.model == "tempcnn":
+        optimizer = torch.optim.Adam(
+            filter(lambda x: x.requires_grad, model.parameters()),
+            weight_decay=5e-8,
+            lr=args.learning_rate
+        )
+        criterion = torch.nn.NLLLoss()
 
     if args.resume and os.path.exists(args.snapshot):
         model.load_state_dict(torch.load(args.snapshot, map_location=args.device))
@@ -222,7 +239,7 @@ def main(args):
             if args.model == "earlyrnn":
                 trainloss = train_epoch(model, traindataloader, optimizer, criterion, device=args.device)
                 testloss, stats = test_epoch(model, testdataloader, criterion, args.device)
-            elif args.model == "transformer":
+            elif args.model in ("transformer", "tempcnn"):
                 trainloss = train_epoch_transformer(model, traindataloader, optimizer, criterion, device=args.device)
                 testloss, stats = test_epoch_transformer(model, testdataloader, criterion, args.device)
 

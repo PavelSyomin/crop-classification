@@ -28,7 +28,15 @@ class Russia(Dataset):
     CACHE_DIR = "cache"
     NORMALIZATION_FACTOR = 1e-4 # scale bands values from [0, 10000] to [0, 1]
     PARTITIONS = ("train", "test")
-    TIME_INTERVAL = ((4, 1), (9, 30)) # (month, day_of_month)
+    TIME_INTERVAL_START = (4, 1)
+    TIME_INTERVALS_END = {
+        1: (4, 30),
+        2: (5, 31),
+        3: (6, 30),
+        4: (7, 31),
+        5: (8, 31),
+        6: (9, 30),
+    }
     YEARS = range(2018, 2023)
 
     def __init__(
@@ -39,7 +47,8 @@ class Russia(Dataset):
         year=2018,
         return_id=False,
         use_cache=False,
-        broadcast_y=True
+        broadcast_y=True,
+        n_months=6
     ):
         # paths
         # we use only selected year
@@ -64,6 +73,7 @@ class Russia(Dataset):
             for _, row in self.fieldsmapping_df.iterrows()
         }
         self.return_id = return_id
+        self.n_months = n_months
         self.use_cache = use_cache
         if use_cache:
             print("Cache is activated and will be used if possible")
@@ -138,13 +148,16 @@ class Russia(Dataset):
         )
         self.features_df["timestamp"] = pd.to_datetime(self.features_df["timestamp"])
         self.features_df.set_index("timestamp", inplace=True)
+        start_date = '-'.join(map(str, [self.year, *self.TIME_INTERVAL_START]))
+        end_date = '-'.join(map(str, [self.year, *self.TIME_INTERVALS_END[self.n_months]]))
+        self.features_df = self.features_df.loc[start_date:end_date]
 
     def interpolate_transform(self, input_timeseries):
         data = input_timeseries[self.BANDS]
         data = data.reindex(
             pd.date_range(
-                start=datetime.datetime(data.index[0].year, *self.TIME_INTERVAL[0]),
-                end=datetime.datetime(data.index[0].year, *self.TIME_INTERVAL[1]),
+                start=datetime.datetime(data.index[0].year, *self.TIME_INTERVAL_START),
+                end=datetime.datetime(data.index[0].year, *self.TIME_INTERVALS_END[self.n_months]),
                 freq="1D",
             )
         )
