@@ -13,6 +13,13 @@ import os
 import random
 from temp_cnn_model import TempCNN
 from transformer_model import TransformerModel
+import json
+import copy
+from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import cohen_kappa_score, make_scorer
+from sklearn.model_selection import GridSearchCV
 
 
 seed = 42
@@ -49,6 +56,8 @@ def parse_args():
     parser.add_argument('--use_cache', action="store_true", help="save preprocessed data in cache files")
     parser.add_argument('--model', type=str, default="earlyrnn", choices=["earlyrnn", "transformer", "tempcnn"], help="model to use")
     parser.add_argument('--n_months', type=int, default=6, help="use selected number of months from April 1. E.g. if this argument is set to 3, then the model will use data from April 1 to June 30")
+    parser.add_argument('--visualize', action="store_true", help="Use visdom to visualize training process")
+    parser.add_argument('--hyperparameters', type=str, help="path to json file with hyperparameters for RF/boosting models", default=None)
 
     args = parser.parse_args()
 
@@ -57,9 +66,16 @@ def parse_args():
 
     return args
 
-def main(args):
-
-    if args.model not in ("earlyrnn", "transformer", "tempcnn"):
+def train(args):
+    supported_models = (
+        "earlyrnn",
+        "transformer",
+        "tempcnn",
+        "rf",
+        "xgboost",
+        "lightgbm",
+    )
+    if args.model not in supported_models:
         raise ValueError(f"Unrecognized model {args.model}")
 
     if args.dataset == "bavariancrops":
@@ -150,13 +166,21 @@ def main(args):
                    n_months=args.n_months)
             for current_year in years_range
         ]
-        train_ds = torch.utils.data.ConcatDataset(train_datasets)
-        test_ds = torch.utils.data.ConcatDataset(test_datasets)
+        if args.model in ("earlyrnn", "transformer", "tempcnn"):
+            train_ds = torch.utils.data.ConcatDataset(train_datasets)
+            test_ds = torch.utils.data.ConcatDataset(test_datasets)
+            print(f"Total length of data: train={len(train_ds)}, test={len(test_ds)}")
+            print("X shape:", train_ds[0][0].shape, "y shape:", train_ds[0][1].shape)
+        else:
+            train_ds, test_ds = {}, {}
+            train_ds["X"] = np.concatenate([ds["X"] for ds in train_datasets])
+            train_ds["y"] = np.concatenate([ds["y"] for ds in train_datasets])
+            test_ds["X"] = np.concatenate([ds["X"] for ds in test_datasets])
+            test_ds["y"] = np.concatenate([ds["y"] for ds in test_datasets])
+            print("X shape:", train_ds["X"].shape, "y shape:", train_ds["y"].shape)
 
     else:
         raise ValueError(f"dataset {args.dataset} not recognized")
-
-    print(f"Total length of data: train={len(train_ds)}, test={len(test_ds)}")
 
     traindataloader = DataLoader(
         train_ds,
@@ -164,8 +188,6 @@ def main(args):
     testdataloader = DataLoader(
         test_ds,
         batch_size=args.batchsize, shuffle=True)
-
-    print("X shape:", train_ds[0][0].shape, "y shape:", train_ds[0][1].shape)
 
     if args.model == "earlyrnn":
         model = EarlyRNN(nclasses=nclasses, input_dim=input_dim).to(args.device)
@@ -186,17 +208,21 @@ def main(args):
             num_classes=nclasses,
             sequencelength=args.sequencelength,
         ).to(args.device)
+    elif args.model == "rf":
+        model = RandomForestClassifier()
+    elif args.model == "xgboost":
+        model = XGBClassifier()
+    elif args.model == "lightgbm":
+        model = LGBMClassifier()
 
-    #optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
-
-    # exclude decision head linear bias from weight decay
-    decay, no_decay = list(), list()
-    for name, param in model.named_parameters():
-        if name == "stopping_decision_head.projection.0.bias":
-            no_decay.append(param)
-        else:
-            decay.append(param)
     if args.model == "earlyrnn":
+        # exclude decision head linear bias from weight decay
+        decay, no_decay = list(), list()
+        for name, param in model.named_parameters():
+            if name == "stopping_decision_head.projection.0.bias":
+                no_decay.append(param)
+            else:
+                decay.append(param)
         optimizer = torch.optim.AdamW([{'params': no_decay, 'weight_decay': 0, "lr": args.learning_rate}, {'params': decay}],
                                       lr=args.learning_rate, weight_decay=args.weight_decay)
         criterion = EarlyRewardLoss(alpha=args.alpha, epsilon=args.epsilon)
@@ -217,6 +243,23 @@ def main(args):
             lr=args.learning_rate
         )
         criterion = torch.nn.NLLLoss()
+    elif args.model in ("rf", "xgboost", "lightgbm"):
+        hyperparameters = get_hyperparameters(args.hyperparameters)
+        optimizer = GridSearchCV(
+            estimator=model,
+            param_grid=hyperparameters,
+            scoring={
+                "accuracy": "accuracy",
+                "precision": "precision_weighted",
+                "recall": "recall_weighted",
+                "fscore": "f1_weighted",
+                "kappa": make_scorer(cohen_kappa_score)
+            },
+            n_jobs=3,
+            refit="accuracy",
+            cv=5,
+            verbose=2
+        )
 
     if args.resume and os.path.exists(args.snapshot):
         model.load_state_dict(torch.load(args.snapshot, map_location=args.device))
@@ -231,87 +274,100 @@ def main(args):
     else:
         train_stats = []
         start_epoch = 1
-    visdom_logger = VisdomLogger()
+    if args.visualize:
+        visdom_logger = VisdomLogger()
 
-    not_improved = 0
-    with tqdm(range(start_epoch, args.epochs + 1)) as pbar:
-        for epoch in pbar:
-            if args.model == "earlyrnn":
-                trainloss = train_epoch(model, traindataloader, optimizer, criterion, device=args.device)
-                testloss, stats = test_epoch(model, testdataloader, criterion, args.device)
-            elif args.model in ("transformer", "tempcnn"):
-                trainloss = train_epoch_transformer(model, traindataloader, optimizer, criterion, device=args.device)
-                testloss, stats = test_epoch_transformer(model, testdataloader, criterion, args.device)
+    best_model = None
 
-            # statistic logging and visualization...
-            precision, recall, fscore, support = sklearn.metrics.precision_recall_fscore_support(
-                y_pred=stats["predictions_at_t_stop"][:, 0], y_true=stats["targets"][:, 0], average="macro",
-                zero_division=0)
-            accuracy = sklearn.metrics.accuracy_score(
-                y_pred=stats["predictions_at_t_stop"][:, 0], y_true=stats["targets"][:, 0])
-            kappa = sklearn.metrics.cohen_kappa_score(
-                stats["predictions_at_t_stop"][:, 0], stats["targets"][:, 0])
+    if args.model in ("earlyrnn", "tempcnn", "transformer"):
+        not_improved = 0
+        with tqdm(range(start_epoch, args.epochs + 1)) as pbar:
+            for epoch in pbar:
+                if args.model == "earlyrnn":
+                    trainloss = train_epoch(model, traindataloader, optimizer, criterion, device=args.device)
+                    testloss, stats = test_epoch(model, testdataloader, criterion, args.device)
+                elif args.model in ("transformer", "tempcnn"):
+                    trainloss = train_epoch_transformer(model, traindataloader, optimizer, criterion, device=args.device)
+                    testloss, stats = test_epoch_transformer(model, testdataloader, criterion, args.device)
 
-            classification_loss = stats["classification_loss"].mean()
-            earliness_reward = stats["earliness_reward"].mean()
-            earliness = 1 - (stats["t_stop"].mean() / (args.sequencelength - 1))
+                # statistic logging and visualization...
+                precision, recall, fscore, support = sklearn.metrics.precision_recall_fscore_support(
+                    y_pred=stats["predictions_at_t_stop"][:, 0], y_true=stats["targets"][:, 0], average="macro",
+                    zero_division=0)
+                accuracy = sklearn.metrics.accuracy_score(
+                    y_pred=stats["predictions_at_t_stop"][:, 0], y_true=stats["targets"][:, 0])
+                kappa = sklearn.metrics.cohen_kappa_score(
+                    stats["predictions_at_t_stop"][:, 0], stats["targets"][:, 0])
 
-            stats["confusion_matrix"] = sklearn.metrics.confusion_matrix(y_pred=stats["predictions_at_t_stop"][:, 0],
-                                                                         y_true=stats["targets"][:, 0])
+                classification_loss = stats["classification_loss"].mean()
+                earliness_reward = stats["earliness_reward"].mean()
+                earliness = 1 - (stats["t_stop"].mean() / (args.sequencelength - 1))
 
-            train_stats.append(
-                dict(
-                    epoch=epoch,
-                    trainloss=trainloss,
-                    testloss=testloss,
-                    accuracy=accuracy,
-                    precision=precision,
-                    recall=recall,
-                    fscore=fscore,
-                    kappa=kappa,
-                    earliness=earliness,
-                    classification_loss=classification_loss,
-                    earliness_reward=earliness_reward
+                stats["confusion_matrix"] = sklearn.metrics.confusion_matrix(y_pred=stats["predictions_at_t_stop"][:, 0],
+                                                                             y_true=stats["targets"][:, 0])
+
+                train_stats.append(
+                    dict(
+                        epoch=epoch,
+                        trainloss=trainloss,
+                        testloss=testloss,
+                        accuracy=accuracy,
+                        precision=precision,
+                        recall=recall,
+                        fscore=fscore,
+                        kappa=kappa,
+                        earliness=earliness,
+                        classification_loss=classification_loss,
+                        earliness_reward=earliness_reward
+                    )
                 )
-            )
 
-            visdom_logger(stats)
-            visdom_logger.plot_boxplot(stats["targets"][:, 0], stats["t_stop"][:, 0], tmin=0, tmax=args.sequencelength)
-            df = pd.DataFrame(train_stats).set_index("epoch")
-            visdom_logger.plot_epochs(df[["precision", "recall", "fscore", "kappa"]], name="accuracy metrics")
-            visdom_logger.plot_epochs(df[["trainloss", "testloss"]], name="losses")
-            visdom_logger.plot_epochs(df[["accuracy", "earliness"]], name="accuracy, earliness")
-            visdom_logger.plot_epochs(df[["classification_loss", "earliness_reward"]], name="loss components")
+                if args.visualize:
+                    visdom_logger(stats)
+                    visdom_logger.plot_boxplot(stats["targets"][:, 0], stats["t_stop"][:, 0], tmin=0, tmax=args.sequencelength)
+                    visdom_logger.plot_epochs(df[["precision", "recall", "fscore", "kappa"]], name="accuracy metrics")
+                    visdom_logger.plot_epochs(df[["trainloss", "testloss"]], name="losses")
+                    visdom_logger.plot_epochs(df[["accuracy", "earliness"]], name="accuracy, earliness")
+                    visdom_logger.plot_epochs(df[["classification_loss", "earliness_reward"]], name="loss components")
 
-            savemsg = ""
-            if len(df) > 2:
-                if testloss < df.testloss.iloc[:-1].values.min():
-                    savemsg = f"saving model to {args.snapshot}"
-                    os.makedirs(os.path.dirname(args.snapshot), exist_ok=True)
-                    torch.save(model.state_dict(), args.snapshot)
+                df = pd.DataFrame(train_stats).set_index("epoch")
+                savemsg = ""
+                if len(df) > 2:
+                    if testloss < df.testloss.iloc[:-1].values.min():
+                        savemsg = f"saving model to {args.snapshot}"
+                        os.makedirs(os.path.dirname(args.snapshot), exist_ok=True)
+                        best_model = copy.deepcopy(model)
+                        torch.save(model.state_dict(), args.snapshot)
 
-                    optimizer_snapshot = os.path.join(os.path.dirname(args.snapshot),
-                                                      os.path.basename(args.snapshot).replace(".pth", "_optimizer.pth")
-                                                      )
-                    torch.save(optimizer.state_dict(), optimizer_snapshot)
+                        optimizer_snapshot = os.path.join(os.path.dirname(args.snapshot),
+                                                          os.path.basename(args.snapshot).replace(".pth", "_optimizer.pth")
+                                                          )
+                        torch.save(optimizer.state_dict(), optimizer_snapshot)
 
-                    df.to_csv(args.snapshot + ".csv")
-                    not_improved = 0 # reset early stopping counter
-                else:
-                    not_improved += 1 # increment early stopping counter
-                    if args.patience is not None:
-                        savemsg = f"early stopping in {args.patience - not_improved} epochs."
+                        df.to_csv(args.snapshot + ".csv")
+                        not_improved = 0 # reset early stopping counter
                     else:
-                        savemsg = ""
+                        not_improved += 1 # increment early stopping counter
+                        if args.patience is not None:
+                            savemsg = f"early stopping in {args.patience - not_improved} epochs."
+                        else:
+                            savemsg = ""
 
-            pbar.set_description(f"epoch {epoch}: trainloss {trainloss:.2f}, testloss {testloss:.2f}, "
-                     f"accuracy {accuracy:.2f}, earliness {earliness:.2f}. "
-                     f"classification loss {classification_loss:.2f}, earliness reward {earliness_reward:.2f}. {savemsg}")
+                pbar.set_description(f"epoch {epoch}: trainloss {trainloss:.2f}, testloss {testloss:.2f}, "
+                         f"accuracy {accuracy:.2f}, earliness {earliness:.2f}. "
+                         f"classification loss {classification_loss:.2f}, earliness reward {earliness_reward:.2f}. {savemsg}")
 
-            if args.patience is not None:
-                if not_improved > args.patience:
-                    print(f"stopping training. testloss {testloss:.2f} did not improve in {args.patience} epochs.")
-                    break
+                if args.patience is not None:
+                    if not_improved > args.patience:
+                        print(f"stopping training. testloss {testloss:.2f} did not improve in {args.patience} epochs.")
+                        break
+    elif args.model in ("rf", "xgboost", "lightgbm"):
+        X_train, y_train = train_ds["X"], train_ds["y"]
+        optimizer.fit(X_train, y_train)
+        best_model = optimizer.best_estimator_
+        train_stats = optimizer.cv_results_
+
+    return best_model, train_stats
 
 
 def train_epoch(model, dataloader, optimizer, criterion, device):
@@ -435,24 +491,19 @@ def test_epoch_transformer(model, dataloader, criterion, device):
     return np.stack(losses).mean(), stats
 
 
-def default_transform(x: np.ndarray, sequencelength: int) -> np.ndarray:
-    # choose with replacement if sequencelength smaller als choose_t
-    replace = False if x.shape[0] >= sequencelength else True
-    idxs = np.random.choice(x.shape[0], sequencelength, replace=replace)
-    idxs.sort()
-    x = x[idxs]
-    return x
+def get_hyperparameters(hyperparameters):
+    if type(hyperparameters) is dict:
+        return hyperparameters
 
-
-def shift_transform(x: np.ndarray, sequencelength: int) -> np.ndarray:
-    max_shift = x.shape[0] - sequencelength
-    if max_shift <= 0:
-        return x
-    shift = np.random.randint(0, max_shift - 1)
-    x = x[shift : shift + sequencelength]
-    return x
+    if type(hyperparameters) is str:
+        try:
+            with open(hyperparameters) as f:
+                return json.load(f)
+        except Exception:
+            print("Cannot read file with hyperparameters")
+            raise
 
 
 if __name__ == '__main__':
     args = parse_args()
-    main(args)
+    train(args)
