@@ -15,6 +15,7 @@ from temp_cnn_model import TempCNN
 from transformer_model import TransformerModel
 import json
 import copy
+from catboost import CatBoostClassifier
 from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
 from sklearn.ensemble import RandomForestClassifier
@@ -54,10 +55,11 @@ def parse_args():
     parser.add_argument('--resume', action='store_true')
     parser.add_argument('--year', type=int, default=2021, help="year for Russia dataset (2018–2022) or None for all years")
     parser.add_argument('--use_cache', action="store_true", help="save preprocessed data in cache files")
-    parser.add_argument('--model', type=str, default="earlyrnn", choices=["earlyrnn", "transformer", "tempcnn"], help="model to use")
+    parser.add_argument('--model', type=str, default="earlyrnn", choices=["earlyrnn", "transformer", "tempcnn", "rf", "lightgbm", "xgboost", "catboost"], help="model to use")
     parser.add_argument('--n_months', type=int, default=6, help="use selected number of months from April 1. E.g. if this argument is set to 3, then the model will use data from April 1 to June 30")
     parser.add_argument('--visualize', action="store_true", help="Use visdom to visualize training process")
     parser.add_argument('--hyperparameters', type=str, help="path to json file with hyperparameters for RF/boosting models", default=None)
+    parser.add_argument('--geo', action="store_true", help="Use geo data", default=None)
 
     args = parser.parse_args()
 
@@ -74,6 +76,7 @@ def train(args):
         "rf",
         "xgboost",
         "lightgbm",
+        "catboost",
     )
     if args.model not in supported_models:
         raise ValueError(f"Unrecognized model {args.model}")
@@ -137,7 +140,7 @@ def train(args):
     elif args.dataset in ["russia"]:
         dataroot = os.path.join(args.dataroot, "russia")
         nclasses = 13
-        input_dim = 10
+        input_dim = 10 if not args.geo else 12
         class_weights = None
         if args.year is None:
             years_range = range(2018, 2023)
@@ -152,7 +155,8 @@ def train(args):
                    use_cache=args.use_cache,
                    return_id=False,
                    broadcast_y=broadcast_y,
-                   n_months=args.n_months)
+                   n_months=args.n_months,
+                   geo=args.geo)
             for current_year in years_range
         ]
         test_datasets = [
@@ -163,7 +167,8 @@ def train(args):
                    use_cache=args.use_cache,
                    return_id=False,
                    broadcast_y=broadcast_y,
-                   n_months=args.n_months)
+                   n_months=args.n_months,
+                   geo=args.geo)
             for current_year in years_range
         ]
         if args.model in ("earlyrnn", "transformer", "tempcnn"):
@@ -214,6 +219,8 @@ def train(args):
         model = XGBClassifier()
     elif args.model == "lightgbm":
         model = LGBMClassifier()
+    elif args.model == "catboost":
+        model = CatBoostClassifier()
 
     if args.model == "earlyrnn":
         # exclude decision head linear bias from weight decay
@@ -243,7 +250,7 @@ def train(args):
             lr=args.learning_rate
         )
         criterion = torch.nn.NLLLoss()
-    elif args.model in ("rf", "xgboost", "lightgbm"):
+    elif args.model in ("rf", "xgboost", "lightgbm", "catboost"):
         hyperparameters = get_hyperparameters(args.hyperparameters)
         optimizer = GridSearchCV(
             estimator=model,
@@ -361,7 +368,7 @@ def train(args):
                     if not_improved > args.patience:
                         print(f"stopping training. testloss {testloss:.2f} did not improve in {args.patience} epochs.")
                         break
-    elif args.model in ("rf", "xgboost", "lightgbm"):
+    elif args.model in ("rf", "xgboost", "lightgbm", "catboost"):
         X_train, y_train = train_ds["X"], train_ds["y"]
         optimizer.fit(X_train, y_train)
         best_model = optimizer.best_estimator_

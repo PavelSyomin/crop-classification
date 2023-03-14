@@ -48,7 +48,8 @@ class Russia(Dataset):
         return_id=False,
         use_cache=False,
         broadcast_y=True,
-        n_months=6
+        n_months=6,
+        geo=False
     ):
         # paths
         # we use only selected year
@@ -61,6 +62,7 @@ class Russia(Dataset):
         fieldsmapping_path = os.path.join(root,
                                           f"russia-{year}",
                                           "parcelsmapping.csv")
+        fields_centers_path = os.path.join(root, "fields_centers.csv")
 
         # set object attributes
         self.sequencelength = sequencelength
@@ -81,6 +83,7 @@ class Russia(Dataset):
                                 self.CACHE_DIR,
                                 f"russia-{self.year}-{self.partition}.dump")
         self.broadcast_y = broadcast_y
+        self.geo = geo
 
         # create cache dir if it does not exist
         if not os.path.exists(self.CACHE_DIR):
@@ -94,6 +97,7 @@ class Russia(Dataset):
         else:
             print(f"Reading from disk")
             self.features_df = pd.read_csv(features_filepath)
+            self.fields_centers = pd.read_csv(fields_centers_path)
             self.preprocess_features()
             self.get_xy()
 
@@ -164,6 +168,7 @@ class Russia(Dataset):
 
     def preprocess_features(self):
         print("Preprocessing features")
+        self.features_df = self.features_df.merge(self.fields_centers, how="left")
         self.features_df["timestamp"] = self.features_df["timestamp"].apply(
             lambda x: x.split(" ")[0]
         )
@@ -203,9 +208,13 @@ class Russia(Dataset):
         print("Preparing X and y")
         self.X_list, self.y_list, self.field_ids_list = [], [], []
         for field_id, sub_df in tqdm.tqdm(self.features_df.groupby("field_id")):
-            self.X_list.append(
-                self.interpolate_transform(sub_df[self.BANDS]).to_numpy()
-            )
+            bands_data = self.interpolate_transform(sub_df[self.BANDS]).to_numpy()
+            if self.geo:
+                geo_data = sub_df[["lat", "lon"]].to_numpy()[0]
+                length = bands_data.shape[0]
+                geo_data = geo_data.reshape((1, -1)).repeat(length, axis=0)
+                bands_data = np.concatenate([bands_data, geo_data], axis=1)
+            self.X_list.append(bands_data)
             self.y_list.append(np.array(sub_df["class_id"].values[0]))
             self.field_ids_list.append(field_id)
 
