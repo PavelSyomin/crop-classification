@@ -59,7 +59,6 @@ def parse_args():
     parser.add_argument('--n_months', type=int, default=6, help="use selected number of months from April 1. E.g. if this argument is set to 3, then the model will use data from April 1 to June 30")
     parser.add_argument('--visualize', action="store_true", help="Use visdom to visualize training process")
     parser.add_argument('--hyperparameters', type=str, help="path to json file with hyperparameters for RF/boosting models", default=None)
-    parser.add_argument('--geo', action="store_true", help="Use geo data", default=None)
 
     args = parser.parse_args()
 
@@ -140,7 +139,7 @@ def train(args):
     elif args.dataset in ["russia"]:
         dataroot = os.path.join(args.dataroot, "russia")
         nclasses = 13
-        input_dim = 10 if not args.geo else 12
+        input_dim = 10
         class_weights = None
         if args.year is None:
             years_range = range(2018, 2023)
@@ -155,8 +154,7 @@ def train(args):
                    use_cache=args.use_cache,
                    return_id=False,
                    broadcast_y=broadcast_y,
-                   n_months=args.n_months,
-                   geo=args.geo)
+                   n_months=args.n_months)
             for current_year in years_range
         ]
         test_datasets = [
@@ -167,8 +165,7 @@ def train(args):
                    use_cache=args.use_cache,
                    return_id=False,
                    broadcast_y=broadcast_y,
-                   n_months=args.n_months,
-                   geo=args.geo)
+                   n_months=args.n_months)
             for current_year in years_range
         ]
         if args.model in ("earlyrnn", "transformer", "tempcnn"):

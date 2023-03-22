@@ -13,7 +13,7 @@ class TrainConfig:
     patience: int = 30
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     epochs: int = 50
-    sequencelength: int = 183
+    sequencelength: int = 182
     batchsize: int = 128
     dataroot: str = os.path.join(os.environ["HOME"],"elects_data")
     snapshot: str = "snapshots/model.pth"
@@ -24,7 +24,6 @@ class TrainConfig:
     n_months: int = 6
     visualize: bool = False
     hyperparameters: dict = None
-    geo: bool = False
 
 
 def make_stats_df(stats_list):

@@ -43,13 +43,12 @@ class Russia(Dataset):
         self,
         root,
         partition="train",
-        sequencelength=182,
+        sequencelength=None,
         year=2018,
         return_id=False,
         use_cache=False,
         broadcast_y=True,
         n_months=6,
-        geo=False
     ):
         # paths
         # we use only selected year
@@ -62,7 +61,6 @@ class Russia(Dataset):
         fieldsmapping_path = os.path.join(root,
                                           f"russia-{year}",
                                           "parcelsmapping.csv")
-        fields_centers_path = os.path.join(root, "fields_centers.csv")
 
         # set object attributes
         self.sequencelength = sequencelength
@@ -97,7 +95,6 @@ class Russia(Dataset):
         else:
             print(f"Reading from disk")
             self.features_df = pd.read_csv(features_filepath)
-            self.fields_centers = pd.read_csv(fields_centers_path)
             self.preprocess_features()
             self.get_xy()
 
@@ -209,11 +206,6 @@ class Russia(Dataset):
         self.X_list, self.y_list, self.field_ids_list = [], [], []
         for field_id, sub_df in tqdm.tqdm(self.features_df.groupby("field_id")):
             bands_data = self.interpolate_transform(sub_df[self.BANDS]).to_numpy()
-            if self.geo:
-                geo_data = sub_df[["lat", "lon"]].to_numpy()[0]
-                length = bands_data.shape[0]
-                geo_data = geo_data.reshape((1, -1)).repeat(length, axis=0)
-                bands_data = np.concatenate([bands_data, geo_data], axis=1)
             self.X_list.append(bands_data)
             self.y_list.append(np.array(sub_df["class_id"].values[0]))
             self.field_ids_list.append(field_id)
