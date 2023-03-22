@@ -1,9 +1,9 @@
 from data import BavarianCrops, BreizhCrops, ModisCDL, SustainbenchCrops, Russia
 from torch.utils.data import DataLoader
-from earlyrnn import EarlyRNN
+from models.earlyrnn import EarlyRNN
 import torch
 from tqdm import tqdm
-from loss import EarlyRewardLoss
+from models.loss import EarlyRewardLoss
 import numpy as np
 from utils import VisdomLogger
 import sklearn.metrics
@@ -11,8 +11,8 @@ import pandas as pd
 import argparse
 import os
 import random
-from temp_cnn_model import TempCNN
-from transformer_model import TransformerModel
+from models.tempcnn import TempCNN
+from models.transformer import TransformerModel
 import json
 import copy
 from catboost import CatBoostClassifier
