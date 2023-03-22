@@ -26,13 +26,14 @@ class TrainConfig:
     hyperparameters: dict = None
 
 
-def make_stats_df(stats_list):
+def make_stats_dataframe(train_results):
     dfs = []
-    for i, stat in enumerate(stats_list):
-        df = pd.DataFrame(stat)
-        df["n_months"] = i + 1
+    for n_months, result in train_results.items():
+        df = pd.DataFrame(result["stats"])
+        df["n_months"] = n_months
         dfs.append(df)
-    result = pd.concat(dfs)
-    result.reset_index(drop=True, inplace=True)
 
-    return result
+    dataframe = pd.concat(dfs)
+    dataframe.reset_index(drop=True, inplace=True)
+
+    return dataframe
