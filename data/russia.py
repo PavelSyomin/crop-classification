@@ -164,7 +164,6 @@ class Russia(Dataset):
 
     def preprocess_features(self):
         print("Preprocessing features")
-        self.features_df = self.features_df.merge(self.fields_centers, how="left")
         self.features_df["timestamp"] = self.features_df["timestamp"].apply(
             lambda x: x.split(" ")[0]
         )
