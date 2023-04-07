@@ -19,7 +19,7 @@ from catboost import CatBoostClassifier
 from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import cohen_kappa_score, make_scorer
+from sklearn.metrics import cohen_kappa_score, make_scorer, precision_score, recall_score
 from sklearn.model_selection import GridSearchCV
 
 
@@ -254,14 +254,14 @@ def train(args):
             param_grid=hyperparameters,
             scoring={
                 "accuracy": "accuracy",
-                "precision": "precision_weighted",
-                "recall": "recall_weighted",
+                "precision": make_scorer(precision_score, average="weighted", zero_division=0),
+                "recall": make_scorer(recall_score, average="weighted", zero_division=0),
                 "fscore": "f1_weighted",
                 "kappa": make_scorer(cohen_kappa_score)
             },
-            n_jobs=3,
+            n_jobs=1,
             refit="accuracy",
-            cv=5,
+            cv=3,
             verbose=2
         )
 
@@ -368,8 +368,25 @@ def train(args):
     elif args.model in ("rf", "xgboost", "lightgbm", "catboost"):
         X_train, y_train = train_ds["X"], train_ds["y"]
         optimizer.fit(X_train, y_train)
+
         best_model = optimizer.best_estimator_
-        train_stats = optimizer.cv_results_
+
+        X_test, y_test = test_ds["X"], test_ds["y"]
+        y_pred = best_model.predict(X_test)
+        precision, recall, fscore, support = sklearn.metrics.precision_recall_fscore_support(
+                    y_pred=y_pred, y_true=y_test, average="macro",
+                    zero_division=0)
+        accuracy = sklearn.metrics.accuracy_score(y_pred=y_pred, y_true=y_test)
+        kappa = sklearn.metrics.cohen_kappa_score(y_pred, y_test)
+
+        train_stats = {
+            "cv_results": optimizer.cv_results_,
+            "precision": precision,
+            "recall": recall,
+            "fscore": fscore,
+            "accuracy": accuracy,
+            "kappa": kappa,
+        }
 
     return best_model, train_stats
 

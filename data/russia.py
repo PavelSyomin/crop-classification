@@ -81,7 +81,6 @@ class Russia(Dataset):
                                 self.CACHE_DIR,
                                 f"russia-{self.year}-{self.partition}.dump")
         self.broadcast_y = broadcast_y
-        self.geo = geo
 
         # create cache dir if it does not exist
         if not os.path.exists(self.CACHE_DIR):
