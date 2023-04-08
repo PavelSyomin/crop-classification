@@ -20,7 +20,7 @@ from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import cohen_kappa_score, make_scorer, precision_score, recall_score
-from sklearn.model_selection import GridSearchCV
+from sklearn.model_selection import RandomizedSearchCV
 
 
 seed = 42
@@ -249,9 +249,10 @@ def train(args):
         criterion = torch.nn.NLLLoss()
     elif args.model in ("rf", "xgboost", "lightgbm", "catboost"):
         hyperparameters = get_hyperparameters(args.hyperparameters)
-        optimizer = GridSearchCV(
+        optimizer = RandomizedSearchCV(
             estimator=model,
-            param_grid=hyperparameters,
+            param_distributions=hyperparameters,
+            n_iter=100,
             scoring={
                 "accuracy": "accuracy",
                 "precision": make_scorer(precision_score, average="weighted", zero_division=0),
@@ -259,10 +260,11 @@ def train(args):
                 "fscore": "f1_weighted",
                 "kappa": make_scorer(cohen_kappa_score)
             },
-            n_jobs=1,
+            n_jobs=-1,
             refit="accuracy",
             cv=3,
-            verbose=2
+            verbose=3,
+            random_state=42
         )
 
     if args.resume and os.path.exists(args.snapshot):
@@ -371,6 +373,9 @@ def train(args):
 
         best_model = optimizer.best_estimator_
 
+        print("Fitting best model on whole train dataset")
+        best_model.fit(X_train, y_train)
+
         X_test, y_test = test_ds["X"], test_ds["y"]
         y_pred = best_model.predict(X_test)
         precision, recall, fscore, support = sklearn.metrics.precision_recall_fscore_support(
@@ -381,11 +386,13 @@ def train(args):
 
         train_stats = {
             "cv_results": optimizer.cv_results_,
-            "precision": precision,
-            "recall": recall,
-            "fscore": fscore,
-            "accuracy": accuracy,
-            "kappa": kappa,
+            "test_scores": {
+                "precision": precision,
+                "recall": recall,
+                "fscore": fscore,
+                "accuracy": accuracy,
+                "kappa": kappa,
+            }
         }
 
     return best_model, train_stats
