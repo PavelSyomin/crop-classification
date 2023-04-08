@@ -43,17 +43,18 @@ class Russia(Dataset):
         self,
         root,
         partition="train",
-        sequencelength=None,
+        sequencelength=60,
         year=2018,
         return_id=False,
-        use_cache=False,
+        use_cache=True,
         broadcast_y=True,
         n_months=6,
     ):
-        # paths
-        # we use only selected year
+        # checks
         assert year in self.YEARS
-        self.year = year
+        assert partition in self.PARTITIONS
+
+        # paths
         features_filepath = os.path.join(root,
                                          f"russia-{year}",
                                          f"{partition}_features.csv.zip")
@@ -63,50 +64,47 @@ class Russia(Dataset):
                                           "parcelsmapping.csv")
 
         # set object attributes
+        self.year = year
         self.sequencelength = sequencelength
-        assert partition in self.PARTITIONS
         self.partition = partition
+        self.return_id = return_id
+        self.broadcast_y = broadcast_y
+        self.n_months = n_months
+        self.use_cache = use_cache
+
+        # create cache dir if it does not exist
+        if not os.path.exists(self.CACHE_DIR):
+            os.mkdir(self.CACHE_DIR)
+
+        self.cache_file = os.path.join(
+            self.CACHE_DIR,
+            f"russia-{self.year}-{self.partition}-{self.n_months}m.dump"
+        )
+
+        print(f"Data: {self.partition}, year: {self.year}, months: {self.n_months}")
+
+        # load and preprocess data
         self.classmapping_df = pd.read_csv(classmapping_path)
         self.fieldsmapping_df = pd.read_csv(fieldsmapping_path)
         self.fieldid2classid = {
             row.field_id: row.class_id
             for _, row in self.fieldsmapping_df.iterrows()
         }
-        self.return_id = return_id
-        self.n_months = n_months
-        self.use_cache = use_cache
-        if use_cache:
-            print("Cache is activated and will be used if possible")
-            self.cache_file = os.path.join(
-                                self.CACHE_DIR,
-                                f"russia-{self.year}-{self.partition}.dump")
-        self.broadcast_y = broadcast_y
 
-        # create cache dir if it does not exist
-        if not os.path.exists(self.CACHE_DIR):
-            os.mkdir(self.CACHE_DIR)
-
-        # load and preprocess data
-        print(f"Data: {self.partition}, year: {year}")
         if self.use_cache and os.path.exists(self.cache_file):
-            print("Trying to use cache")
-            self.get_xy()
+            print("Loading from cache")
+            self.load_from_cache()
         else:
             print(f"Reading from disk")
             self.features_df = pd.read_csv(features_filepath)
             self.preprocess_features()
             self.get_xy()
+            self.save_to_cache()
 
         self.items_count = len(self.X_list)
-
-        print(
-            f"Russia dataset for {year} year ({self.partition} part) is loaded.",
-            f"It contains {self.items_count} fields"
-        )
+        print(f"# of fields: {self.items_count}")
 
     def __getitem__(self, index):
-        # dataset[index]
-
         # Special case for string indices X and y
         # used to get all X or y values as ndarrays
         # for Random Forest / boosting methods
@@ -127,26 +125,9 @@ class Russia(Dataset):
         # General case for torch dataloader
         X = self.X_list[index]
 
-        # get length of this sample
-        #t = X.shape[0]
-
         y = self.y_list[index]
         if self.broadcast_y:
             y = np.full(X.shape[0], fill_value=y)
-
-        '''if t < self.sequencelength:
-            # time series shorter than "sequencelength" will be zero-padded
-            npad = self.sequencelength - t
-            X = np.pad(X, [(0, npad), (0, 0)], 'constant', constant_values=0)
-            if self.broadcast_y:
-                y = np.pad(y, (0, npad), 'constant', constant_values=0)
-        elif t > self.sequencelength:
-            # time series longer than "sequencelength" will be sub-sampled
-            idxs = np.random.choice(t, self.sequencelength, replace=False)
-            idxs.sort()
-            X = X[idxs]
-            if self.broadcast_y:
-                y = y[idxs]'''
 
         X, y = self.adjust_to_sequencelength(X, y)
 
@@ -159,8 +140,14 @@ class Russia(Dataset):
             return X, y
 
     def __len__(self):
-        # len(dataset)
         return self.items_count
+
+    def load_from_cache(self):
+        try:
+            with open(self.cache_file, "rb") as f:
+                self.X_list, self.y_list, self.field_ids_list = pickle.load(f)
+        except Exception as e:
+            raise RuntimeError("Cannot load data from cache") from e
 
     def preprocess_features(self):
         print("Preprocessing features")
@@ -194,12 +181,6 @@ class Russia(Dataset):
         return data
 
     def get_xy(self):
-        if self.use_cache and os.path.exists(self.cache_file):
-            print("Loading X and y from cache")
-            with open(self.cache_file, "rb") as f:
-                self.X_list, self.y_list, self.field_ids_list = pickle.load(f)
-                return
-
         print("Preparing X and y")
         self.X_list, self.y_list, self.field_ids_list = [], [], []
         for field_id, sub_df in tqdm.tqdm(self.features_df.groupby("field_id")):
@@ -207,10 +188,6 @@ class Russia(Dataset):
             self.X_list.append(bands_data)
             self.y_list.append(np.array(sub_df["class_id"].values[0]))
             self.field_ids_list.append(field_id)
-
-        if self.use_cache:
-            with open(self.cache_file, "wb") as f:
-                pickle.dump([self.X_list, self.y_list, self.field_ids_list], f)
 
     def adjust_to_sequencelength(self, X, y=None):
         sample_length = X.shape[0]
@@ -233,4 +210,11 @@ class Russia(Dataset):
             return X, y
         else:
             return X
+
+    def save_to_cache(self):
+        try:
+            with open(self.cache_file, "wb") as f:
+                pickle.dump([self.X_list, self.y_list, self.field_ids_list], f)
+        except Exception as e:
+            print(f"Cannot save data to cache: {e}")
 
