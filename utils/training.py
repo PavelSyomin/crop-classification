@@ -24,6 +24,7 @@ class TrainConfig:
     n_months: int = 6
     visualize: bool = False
     hyperparameters: dict = None
+    n_iter: int = 50
 
 
 def make_stats_dataframe(train_results):

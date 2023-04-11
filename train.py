@@ -59,6 +59,7 @@ def parse_args():
     parser.add_argument('--n_months', type=int, default=6, help="use selected number of months from April 1. E.g. if this argument is set to 3, then the model will use data from April 1 to June 30")
     parser.add_argument('--visualize', action="store_true", help="Use visdom to visualize training process")
     parser.add_argument('--hyperparameters', type=str, help="path to json file with hyperparameters for RF/boosting models", default=None)
+    parser.add_argument('--n_iter', type=int, default=100, help="number of tried combinations in RandomizedSearchCV")
 
     args = parser.parse_args()
 
@@ -252,7 +253,7 @@ def train(args):
         optimizer = RandomizedSearchCV(
             estimator=model,
             param_distributions=hyperparameters,
-            n_iter=100,
+            n_iter=args.n_iter,
             scoring={
                 "accuracy": "accuracy",
                 "precision": make_scorer(precision_score, average="weighted", zero_division=0),
