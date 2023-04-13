@@ -218,7 +218,7 @@ def train(args):
     elif args.model == "lightgbm":
         model = LGBMClassifier()
     elif args.model == "catboost":
-        model = CatBoostClassifier()
+        model = CatBoostClassifier(verbose=50)
 
     if args.model == "earlyrnn":
         # exclude decision head linear bias from weight decay
@@ -261,7 +261,7 @@ def train(args):
                 "fscore": "f1_weighted",
                 "kappa": make_scorer(cohen_kappa_score)
             },
-            n_jobs=-1,
+            n_jobs=1,
             refit="accuracy",
             cv=3,
             verbose=3,
