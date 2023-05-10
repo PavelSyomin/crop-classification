@@ -41,16 +41,6 @@ class TransformerModel(nn.Module):
         self.flatten = Flatten()
         self.outlinear = Linear(d_model, num_classes)
 
-        """
-        self.sequential = Sequential(
-            ,
-            ,
-            ,
-            ,
-            ReLU(),
-        )
-        """
-
     def forward(self, x):
         x = self.inlinear(x)
         x = self.relu(x)
