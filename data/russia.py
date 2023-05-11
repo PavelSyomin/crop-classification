@@ -90,6 +90,10 @@ class Russia(Dataset):
             row.field_id: row.class_id
             for _, row in self.fieldsmapping_df.iterrows()
         }
+        self.cropid2cropname = {
+            row["class_id"]: row["class_name"]
+            for _, row in self.classmapping_df.iterrows()
+        }
 
         if self.use_cache and os.path.exists(self.cache_file):
             print("Loading from cache")
@@ -217,4 +221,9 @@ class Russia(Dataset):
                 pickle.dump([self.X_list, self.y_list, self.field_ids_list], f)
         except Exception as e:
             print(f"Cannot save data to cache: {e}")
+
+    @property
+    def crops(self, crop_id: int):
+        return self.cropid2cropname.get(crop_id)
+
 

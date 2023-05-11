@@ -215,7 +215,7 @@ def train(args):
             hidden_dims=64,
             nclasses=nclasses,
             seq_length=args.sequencelength
-        )
+        ).to(args.device)
     elif args.model == "transformer":
         model = TransformerModel(
             input_dim=input_dim,
@@ -331,9 +331,15 @@ def train(args):
                 classification_loss = stats["classification_loss"].mean()
                 earliness_reward = stats["earliness_reward"].mean()
                 earliness = 1 - (stats["t_stop"].mean() / (args.sequencelength - 1))
+                avg_t_stop = stats["t_stop"].mean()
 
                 stats["confusion_matrix"] = sklearn.metrics.confusion_matrix(y_pred=stats["predictions_at_t_stop"][:, 0],
                                                                              y_true=stats["targets"][:, 0])
+
+                if args.model in ("earlyrnn", "earlytransformer", "earlytempcnn"):
+                    monthly_slices = calculate_monthly_slices(stats)
+                else:
+                    monthly_slices = {}
 
                 train_stats.append(
                     dict(
@@ -347,7 +353,9 @@ def train(args):
                         kappa=kappa,
                         earliness=earliness,
                         classification_loss=classification_loss,
-                        earliness_reward=earliness_reward
+                        earliness_reward=earliness_reward,
+                        avg_t_stop=avg_t_stop,
+                        monthly=monthly_slices
                     )
                 )
 
@@ -361,6 +369,7 @@ def train(args):
 
                 df = pd.DataFrame(train_stats).set_index("epoch")
                 savemsg = ""
+                best_model = copy.deepcopy(model)
                 if len(df) > 2:
                     if testloss < df.testloss.iloc[:-1].values.min():
                         savemsg = f"saving model to {args.snapshot}"
@@ -554,6 +563,41 @@ def get_hyperparameters(hyperparameters):
             print("Cannot read file with hyperparameters")
             raise
 
+
+def calculate_monthly_slices(stats):
+    class_probabilities = stats["class_probabilities"]
+    predictions = class_probabilities.argmax(-1)
+    targets = stats["targets"]
+    batch_size, seq_length, n_classes = class_probabilities.shape
+
+    slices = []
+    for n_months in range(1, seq_length  // 10 + 1):
+        col_index = n_months * 10 - 1
+        precision, recall, fscore, support = sklearn.metrics.precision_recall_fscore_support(
+            y_pred=predictions[:, col_index],
+            y_true=targets[:, 0],
+            average="macro",
+            zero_division=0
+        )
+        accuracy = sklearn.metrics.accuracy_score(
+            y_pred=predictions[:, col_index],
+            y_true=targets[:, 0]
+        )
+        kappa = sklearn.metrics.cohen_kappa_score(
+            predictions[:, col_index],
+            targets[:, 0]
+        )
+
+        slices.append({
+            "n_months": n_months,
+            "accuracy": accuracy,
+            "precision": precision,
+            "recall": recall,
+            "fscore": fscore,
+            "kappa": kappa
+        })
+
+    return slices
 
 if __name__ == '__main__':
     args = parse_args()
