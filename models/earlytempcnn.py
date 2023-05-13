@@ -16,7 +16,7 @@ class EarlyTempCNN(nn.Module):
         )
 
         self.backbone = TempCNNBackbone(input_dim=input_dim, num_classes=nclasses,
-                                sequencelength=seq_length, kernel_size=7, hidden_dims=hidden_dims,
+                                sequencelength=seq_length, kernel_size=seq_length // 3, hidden_dims=hidden_dims,
                                 dropout=0.18203942949809093)
 
         # Heads
@@ -120,9 +120,12 @@ class TempCNNBackbone(torch.nn.Module):
         # require NxTxD
         x = x.transpose(1,2)
         x = self.conv_bn_relu1(x)
+        #print(x.shape)
         x = self.conv_bn_relu2(x)
+        #print(x.shape)
         x = self.conv_bn_relu3(x)
         x = x.transpose(2, 1)
+        #print(x.shape)
 
         return x
 
@@ -145,7 +148,8 @@ class Conv1D_BatchNorm_Relu_Dropout(torch.nn.Module):
         super(Conv1D_BatchNorm_Relu_Dropout, self).__init__()
 
         self.block = nn.Sequential(
-            nn.Conv1d(input_dim, hidden_dims, kernel_size, padding=(kernel_size // 2)),
+            nn.ConstantPad1d((kernel_size - 1, 0), 0),
+            nn.Conv1d(input_dim, hidden_dims, kernel_size, padding=0),
             nn.BatchNorm1d(hidden_dims),
             nn.ReLU(),
             nn.Dropout(p=drop_probability)

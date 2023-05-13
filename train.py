@@ -13,7 +13,6 @@ import os
 import random
 from models.tempcnn import TempCNN
 from models.transformer import TransformerModel
-from models.earlytransformer import EarlyTransformer
 from models.earlytempcnn import EarlyTempCNN
 import json
 import copy
@@ -74,7 +73,6 @@ def train(args):
     supported_models = (
         "earlyrnn",
         "transformer",
-        "earlytransformer",
         "tempcnn",
         "earlytempcnn",
         "rf",
@@ -150,7 +148,7 @@ def train(args):
             years_range = range(2018, 2023)
         else:
             years_range = (args.year,)
-        broadcast_y = True if args.model in ("earlyrnn", "earlytransformer", "earlytempcnn") else False
+        broadcast_y = True if args.model in ("earlyrnn", "earlytempcnn") else False
         train_datasets = [
             Russia(root=dataroot,
                    partition="train",
@@ -173,7 +171,7 @@ def train(args):
                    n_months=args.n_months)
             for current_year in years_range
         ]
-        if args.model in ("earlyrnn", "earlytransformer", "earlytempcnn", "transformer", "tempcnn"):
+        if args.model in ("earlyrnn", "earlytempcnn", "transformer", "tempcnn"):
             train_ds = torch.utils.data.ConcatDataset(train_datasets)
             test_ds = torch.utils.data.ConcatDataset(test_datasets)
             print(f"Total length of data: train={len(train_ds)}, test={len(test_ds)}")
@@ -198,17 +196,6 @@ def train(args):
 
     if args.model == "earlyrnn":
         model = EarlyRNN(nclasses=nclasses, input_dim=input_dim).to(args.device)
-    elif args.model == "earlytransformer":
-        model = EarlyTransformer(
-            input_dim=input_dim,
-            nclasses=nclasses,
-            d_inner=512,
-            d_model=args.sequencelength,
-            nhead=1,
-            nlayers=3,
-            activation="relu",
-            dropout=0.4
-        ).to(args.device)
     elif args.model == "earlytempcnn":
         model = EarlyTempCNN(
             input_dim=input_dim,
@@ -242,7 +229,7 @@ def train(args):
     elif args.model == "catboost":
         model = CatBoostClassifier(verbose=50)
 
-    if args.model in ("earlyrnn", "earlytransformer", "earlytempcnn"):
+    if args.model in ("earlyrnn", "earlytempcnn"):
         # exclude decision head linear bias from weight decay
         decay, no_decay = list(), list()
         for name, param in model.named_parameters():
@@ -308,11 +295,11 @@ def train(args):
 
     best_model = None
 
-    if args.model in ("earlyrnn", "earlytransformer", "earlytempcnn", "tempcnn", "transformer"):
+    if args.model in ("earlyrnn", "earlytempcnn", "tempcnn", "transformer"):
         not_improved = 0
         with tqdm(range(start_epoch, args.epochs + 1)) as pbar:
             for epoch in pbar:
-                if args.model in ("earlyrnn", "earlytransformer", "earlytempcnn"):
+                if args.model in ("earlyrnn", "earlytempcnn"):
                     trainloss = train_epoch(model, traindataloader, optimizer, criterion, device=args.device)
                     testloss, stats = test_epoch(model, testdataloader, criterion, args.device)
                 elif args.model in ("transformer", "tempcnn"):

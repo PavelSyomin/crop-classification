@@ -223,7 +223,7 @@ class Russia(Dataset):
             print(f"Cannot save data to cache: {e}")
 
     @property
-    def crops(self, crop_id: int):
-        return self.cropid2cropname.get(crop_id)
+    def crops(self):
+        return self.cropid2cropname
 
 
