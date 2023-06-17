@@ -1,0 +1,15 @@
+\thispagestyle{plain}
+\begin{center}
+    \Large
+    \textbf{Application of Machine Learning for Early Crop Classification Using Satellite Imagery}
+    
+    \vspace{0.4cm}
+    \textbf{Pavel O. Syomin}
+    
+    \vspace{0.9cm}
+    \textbf{Abstract}
+\end{center}
+
+In this thesis, the problem of early crop classification is being solved. Typically crop classification is performed using time series of satellite shots that cover the whole vegetation season. Early classification is a prediction of a crop cultivated on a field using the shortest possible time series counting from the beginning of the season. In this study, a private ground-truth dataset of Russian fields for 2018–2022 is used, as well as an open collection of Sentinel-2 satellite images. Two approaches for early classification are compared, the first is the ensembles of generic models trained on varying-length input time series, and the second is special models optimized jointly for accuracy and earliness. Both classical tree-based machine learning methods (namely, Random Forest, LightGBM, and CatBoost) and novel deep learning methods (namely, recurrent, convolutional and attention-based neural networks) are applied. Also, an original EarlyTempCNN model combining a convolutional backbone with two heads and simultaneous optimization for earliness and accuracy is proposed. It is found that there is an opportunity to classify crops utilizing only $2/3$ of full-length time series with an insignificant reduction in quality or even without any loss in scores, if the models have been trained on a large enough dataset. Special models with joint optimization show top scores on the small dataset, but on the larger dataset, their performance is on the level of tree-based baseline solutions. However, such models provide for additional benefits like reduced training time compared to the ensembles, higher interpretability resulting from confidence estimates and probability distributions for each timestamp, individualization of predictions so that the decision for each field is made separately, and overall opportunity for building real-time fine-tuned solutions. The proposed EarlyTempCNN model has achieved one of the best scores on the small dataset, but on the large dataset, its performance has decreased.
+
+
