@@ -17,7 +17,7 @@ pip install -r requirements.txt
 
 ## Getting Started
 
-Training, models comparison, inference, robustness check are in [Crop Clasification notebook](notebooks/Crop Classification.ipynb).
+Training, models comparison, inference, robustness check are in [Crop Clasification notebook](notebooks/CropClassification.ipynb).
 
 <img height="200px" src="./png/earlyrnn_preds.png">
 
