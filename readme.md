@@ -23,7 +23,7 @@ Training, models comparison, inference, robustness check are in [Crop Clasificat
 
 [Slides](Presentation.odp)
 
-[Thesis in PDF](Crop Classification.pdf)
+[Thesis in PDF](Crop_Classification.pdf)
 
 ## CLI (may not work for some datasets)
 
