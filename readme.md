@@ -1,27 +1,12 @@
-# ELECTS: End-to-End Learned Early Classification of Time Series for In-Season Crop Type Mapping
+# Application of Machine Learning for Early Crop Classification
+Using Satellite Imagery
 
-<img width="100%" src="png/elects.png">
+<img width="100%" src="png/metrics_plot.png">
 
-please cite
+My Master's thesis on [HSE MDS program](https://www.hse.ru/en/ma/mds/).
+
+Based on this paper:
 > Marc Rußwurm, Nicolas Courty, Remi Emonet, Sebastien Lefévre, Devis Tuia, and Romain Tavenard (2023). End-to-End Learned Early Classification of Time Series for In-Season Crop Type Mapping. ISPRS Journal of Photogrammetry and Remote Sensing. 196. 445-456. https://doi.org/10.1016/j.isprsjprs.2022.12.016
-
-```
-@article{russwurm2023:ELECTS,
-  title = {End-to-end learned early classification of time series for in-season crop type mapping},
-  journal = {ISPRS Journal of Photogrammetry and Remote Sensing},
-  volume = {196},
-  pages = {445-456},
-  year = {2023},
-  issn = {0924-2716},
-  doi = {https://doi.org/10.1016/j.isprsjprs.2022.12.016},
-  url = {https://www.sciencedirect.com/science/article/pii/S092427162200332X},
-  author = {Marc Rußwurm and Nicolas Courty and Rémi Emonet and Sébastien Lefèvre and Devis Tuia and Romain Tavenard},
-}
-```
-
-paper available at https://www.sciencedirect.com/science/article/pii/S092427162200332X
-
-[arxiv preprint here](https://arxiv.org/pdf/1901.10681.pdf)
 
 ## Dependencies
 
@@ -31,14 +16,17 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Getting Started:
+## Getting Started
 
-Test model predictions on the evaluation set with Jupyter
-Notebook provided in `elects.ipynb`
+Training, models comparison, inference, robustness check are in `Crop Clasification.ipynb`
 
-<img height="200px" src="./png/elects_notebook.png">
+<img height="200px" src="./png/earlyrnn_preds.png">
 
-## Run Training Loop
+Slides are in `Presentation.odp`.
+
+## CLI
+
+Look at the code of `train.py` to see all the options. Russian dataset is private.
 
 ### Monitor training visally (optional)
 
@@ -65,6 +53,12 @@ epoch 100: trainloss 1.70, testloss 1.97, accuracy 0.87, earliness 0.48. classif
 The BavarianCrops dataset is automatically downloaded.
 Additional options (e.g., `--alpha`, `--epsilon`, `--batchsize`) are available with `python train.py --help`.
 
+## Other examples
+```
+python train.py --dataroot /data/sustainbench --dataset ghana
+python train.py --dataroot /data/sustainbench --dataset southsudan --epochs 500
+```
+
 ## Docker
 
 It is also possible to install dependencies in a docker environment
@@ -75,9 +69,3 @@ and run the training script
 ```
 docker run elects python train.py
 ```
-
-
-python train.py --dataroot /data/sustainbench --dataset ghana
-python train.py --dataroot /data/sustainbench --dataset southsudan
-
---dataroot /data/sustainbench --dataset southsudan --epochs 500
