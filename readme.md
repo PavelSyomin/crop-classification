@@ -17,15 +17,15 @@ pip install -r requirements.txt
 
 ## Getting Started
 
-Training, models comparison, inference, robustness check are in `Crop Clasification.ipynb`
+Training, models comparison, inference, robustness check are in [Crop Clasification notebook](Crop Classification.ipynb)`
 
 <img height="200px" src="./png/earlyrnn_preds.png">
 
-Slides are in `Presentation.odp`.
+[Slides](Presentation.odp).
 
 ## CLI (may not work for some datasets)
 
-Look at the code of `train.py` to see all the options. Russian dataset is private.
+Look at the code of [train.py](train.py) to see all the options. Russian dataset is private.
 
 ### Monitor training visally (optional)
 
